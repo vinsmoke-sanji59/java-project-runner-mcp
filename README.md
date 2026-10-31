@@ -1,6 +1,8 @@
-# Java Project Runner MCP (v1.3)
+# Java Project Runner MCP (v1.3.1)
 
 Single-process MCP server (stdio) that builds and manages **registered** Spring Boot + Maven projects on **macOS, Linux, and Windows**: list / inspect / build / start / stop / restart / status / logs / registry CRUD / reclaim.
+
+Distributed via **GitHub only** (no npm publish). Prefer `npx` so clients fetch and build automatically.
 
 **Locked behavior**
 
@@ -22,25 +24,50 @@ Single-process MCP server (stdio) that builds and manages **registered** Spring 
 
 ## Install
 
+### Recommended: `npx` from GitHub (no local clone)
+
+Cursor / Claude Code `mcp.json` — first launch downloads the repo and runs `prepare` → `npm run build`:
+
+```json
+{
+  "mcpServers": {
+    "java-project-runner": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "github:vinsmoke-sanji59/java-project-runner-mcp"
+      ]
+    }
+  }
+}
+```
+
+Requires Node.js **20+** on `PATH`. First run is slower; later runs use the npx cache.
+
+Pin a tag/commit if you want a fixed version, e.g. `github:vinsmoke-sanji59/java-project-runner-mcp#v1.3.1`.
+
+### Optional: clone for development
+
 ```bash
 git clone https://github.com/vinsmoke-sanji59/java-project-runner-mcp.git
 cd java-project-runner-mcp
 nvm use 20   # if you use nvm
-npm install
-npm run build
+npm install   # also runs prepare → build
 npm test
+npm run dev   # TypeScript via tsx
 ```
 
-Dev (TypeScript directly):
+Or point MCP at a local build:
 
-```bash
-npm run dev
-```
-
-Production entry after build:
-
-```bash
-node dist/index.js
+```json
+{
+  "mcpServers": {
+    "java-project-runner": {
+      "command": "node",
+      "args": ["/absolute/path/to/java-project-runner-mcp/dist/index.js"]
+    }
+  }
+}
 ```
 
 ## Registry
@@ -105,43 +132,11 @@ Notes:
 
 Response includes `buildSkipped` and `buildSkipReason` (`jar_fresh` | `skipBuild_flag` | `null`).
 
-## Cursor stdio config
+## Cursor / Claude Code config
 
-Add to Cursor MCP settings (path may be `~/.cursor/mcp.json` or the IDE MCP UI). Replace the paths with your Node binary and clone location:
+Prefer the **Install → Recommended `npx`** block above in `~/.cursor/mcp.json` or Claude Code `.mcp.json`.
 
-```json
-{
-  "mcpServers": {
-    "java-project-runner": {
-      "command": "/absolute/path/to/node",
-      "args": [
-        "/absolute/path/to/java-project-runner-mcp/dist/index.js"
-      ]
-    }
-  }
-}
-```
-
-Use an absolute Node 20+ binary. After `npm run build`, point `args` at `dist/index.js`.
-
-## Claude Code stdio config
-
-In Claude Code MCP settings / `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "java-project-runner": {
-      "command": "/absolute/path/to/node",
-      "args": [
-        "/absolute/path/to/java-project-runner-mcp/dist/index.js"
-      ]
-    }
-  }
-}
-```
-
-Or with `npx tsx` for local iteration (Node 20+ on PATH):
+Local clone / absolute `node dist/index.js` is fine for development. For local TypeScript iteration:
 
 ```json
 {
