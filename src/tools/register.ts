@@ -151,16 +151,25 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
     "project_start",
     {
       description:
-        "package then start the configured JAR (detached process group). Returns immediately with pid/status.",
+        "Start the configured JAR (detached process group). Builds with Maven unless the JAR is fresh or skipBuild is set; use rebuild to force package.",
       inputSchema: {
         projectId: z.string(),
         profile: z.string().optional(),
+        rebuild: z
+          .boolean()
+          .optional()
+          .describe("Force Maven package before start"),
+        skipBuild: z
+          .boolean()
+          .optional()
+          .describe("Skip Maven; require an existing resolvable JAR"),
       },
     },
-    async ({ projectId, profile }) => {
+    async ({ projectId, profile, rebuild, skipBuild }) => {
       try {
         const project = ctx.registry.requireEnabled(projectId);
-        const state = await ctx.processes.start(project, { profile });
+        const { state, buildSkipped, buildSkipReason } =
+          await ctx.processes.start(project, { profile, rebuild, skipBuild });
         return okResult({
           success: true,
           projectId,
@@ -173,6 +182,8 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
           pgid: state.pgid,
           jarResolved: state.jarResolved,
           logPaths: state.logPaths,
+          buildSkipped,
+          buildSkipReason,
         });
       } catch (err) {
         return errResult(err);
@@ -210,16 +221,24 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
   server.registerTool(
     "project_restart",
     {
-      description: "Stop (if running) then start under one project lock",
+      description:
+        "Stop (if running) then start under one project lock (same build skip / rebuild options as project_start)",
       inputSchema: {
         projectId: z.string(),
         profile: z.string().optional(),
+        rebuild: z.boolean().optional(),
+        skipBuild: z.boolean().optional(),
       },
     },
-    async ({ projectId, profile }) => {
+    async ({ projectId, profile, rebuild, skipBuild }) => {
       try {
         const project = ctx.registry.requireEnabled(projectId);
-        const state = await ctx.processes.restart(project, { profile });
+        const { state, buildSkipped, buildSkipReason } =
+          await ctx.processes.restart(project, {
+            profile,
+            rebuild,
+            skipBuild,
+          });
         return okResult({
           success: true,
           projectId,
@@ -227,6 +246,8 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
           message: "restarted",
           pid: state.pid,
           pgid: state.pgid,
+          buildSkipped,
+          buildSkipReason,
         });
       } catch (err) {
         return errResult(err);

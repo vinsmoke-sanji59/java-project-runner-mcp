@@ -11,13 +11,29 @@ import type { ProjectConfig } from "../types/project.js";
 import type { ProjectRuntimeState } from "../types/state.js";
 import { runMavenBuild } from "./build.js";
 import { checkLoopbackHealth } from "./health.js";
-import { resolveJarPath } from "./jar-resolve.js";
+import {
+  decideBuild,
+  type BuildSkipReason,
+} from "./jar-freshness.js";
+import { jarResolvable, resolveJarPath } from "./jar-resolve.js";
 import {
   createLogWriteStream,
   ensureLogDir,
   logFilePath,
 } from "./logs.js";
 import { projectMutex, StateStore } from "./state-store.js";
+
+export interface StartOptions {
+  profile?: string;
+  rebuild?: boolean;
+  skipBuild?: boolean;
+}
+
+export interface StartResult {
+  state: ProjectRuntimeState;
+  buildSkipped: boolean;
+  buildSkipReason: BuildSkipReason | null;
+}
 
 interface LiveHandle {
   child: ChildProcess;
@@ -83,8 +99,8 @@ export class ProcessManager {
 
   async start(
     project: ProjectConfig & { resolvedPath: string },
-    options: { profile?: string } = {},
-  ): Promise<ProjectRuntimeState> {
+    options: StartOptions = {},
+  ): Promise<StartResult> {
     return projectMutex.runExclusive(project.id, "start", () =>
       this.startCore(project, options),
     );
@@ -101,8 +117,8 @@ export class ProcessManager {
 
   async restart(
     project: ProjectConfig & { resolvedPath: string },
-    options: { profile?: string } = {},
-  ): Promise<ProjectRuntimeState> {
+    options: StartOptions = {},
+  ): Promise<StartResult> {
     return projectMutex.runExclusive(project.id, "restart", async () => {
       const current = await this.stateStore.get(project.id);
       if (
@@ -162,8 +178,8 @@ export class ProcessManager {
 
   private async startCore(
     project: ProjectConfig & { resolvedPath: string },
-    options: { profile?: string } = {},
-  ): Promise<ProjectRuntimeState> {
+    options: StartOptions = {},
+  ): Promise<StartResult> {
     const current = await this.stateStore.get(project.id);
     if (
       this.live.has(project.id) ||
@@ -184,29 +200,45 @@ export class ProcessManager {
       readiness: project.healthCheckUrl ? "unverified" : "not_configured",
     });
 
-    const buildResult = await runMavenBuild(project, {
-      goal: project.buildGoal ?? "package",
-      profile: options.profile,
+    const pre = jarResolvable(project.resolvedPath, project.jarPath);
+    const decision = decideBuild({
+      rebuild: options.rebuild,
+      skipBuild: options.skipBuild,
+      projectRoot: project.resolvedPath,
+      jarPath: pre.ok && pre.resolved ? pre.resolved : null,
     });
-    if (!buildResult.success) {
-      const prev = await this.stateStore.get(project.id);
-      await this.stateStore.update(project.id, {
-        status: "failed",
-        lastError: buildResult.message,
-        logPaths: { ...prev.logPaths, build: buildResult.logPath },
+
+    let buildLogPath: string | undefined = current.logPaths?.build;
+    if (!decision.skip) {
+      const buildResult = await runMavenBuild(project, {
+        goal: project.buildGoal ?? "package",
+        profile: options.profile,
       });
-      throw new AppError("BUILD_FAILED", buildResult.message);
+      buildLogPath = buildResult.logPath;
+      if (!buildResult.success) {
+        const prev = await this.stateStore.get(project.id);
+        await this.stateStore.update(project.id, {
+          status: "failed",
+          lastError: buildResult.message,
+          logPaths: { ...prev.logPaths, build: buildResult.logPath },
+        });
+        throw new AppError("BUILD_FAILED", buildResult.message);
+      }
     }
 
     let jarResolved: string;
     try {
       jarResolved = resolveJarPath(project.resolvedPath, project.jarPath);
     } catch (err) {
+      const msg =
+        decision.skip && options.skipBuild
+          ? `skipBuild set but JAR not resolvable: ${(err as Error).message}`
+          : (err as Error).message;
       await this.stateStore.update(project.id, {
         status: "failed",
-        lastError: (err as Error).message,
+        lastError: msg,
       });
-      throw err;
+      throw new AppError("START_FAILED", msg);
     }
 
     const profile = assertAllowedProfile(
@@ -288,6 +320,7 @@ export class ProcessManager {
       });
     });
 
+    const prev = await this.stateStore.get(project.id);
     const state = await this.stateStore.update(project.id, {
       status: "running",
       pid,
@@ -302,7 +335,11 @@ export class ProcessManager {
       logPaths: {
         stdout: stdoutPath,
         stderr: stderrPath,
-        build: buildResult.logPath,
+        ...(buildLogPath
+          ? { build: buildLogPath }
+          : prev.logPaths?.build
+            ? { build: prev.logPaths.build }
+            : {}),
       },
     });
 
@@ -314,7 +351,11 @@ export class ProcessManager {
       })();
     }
 
-    return state;
+    return {
+      state,
+      buildSkipped: decision.skip,
+      buildSkipReason: decision.reason,
+    };
   }
 
   private async stopCore(
