@@ -161,8 +161,11 @@ Still refuses `unknown`; tool description / error text points to reclaim or forc
 
 ## Error codes
 
-Reuse `AppError` codes where possible: `INVALID_ARGS`, `NOT_FOUND`, `BUSY`, `START_FAILED`, `BUILD_FAILED`, `NOT_RUNNING`, `PATH_DENIED`.  
-Optional new: `REGISTRY_CONFLICT` (duplicate id), `REGISTRY_BUSY_RUNTIME` (unregister while active) — or map to `BUSY` / `INVALID_ARGS` for fewer surface codes. Prefer **`BUSY`** for unregister-while-running and **`INVALID_ARGS`** for duplicate id to avoid proliferating codes.
+Reuse existing `AppError` codes only (no new codes):
+
+- Duplicate project id → `INVALID_ARGS`
+- Unregister while `running` / `starting` / `stopping` / `unknown` → `BUSY`
+- Other failures → existing `NOT_FOUND`, `START_FAILED`, `BUILD_FAILED`, `NOT_RUNNING`, `PATH_DENIED`, `INVALID_ARGS` as appropriate
 
 ---
 
@@ -187,7 +190,7 @@ Update README:
 - Note smart skip + overrides.
 - Note reclaim / force_stop safety.
 
-Bump mental version note as “v1.1 behavior” in README locked-behavior section without requiring a semver debate in this spec (package version bump optional in implementation plan).
+README locked-behavior section documents these as **v1.1** additions. Implementation plan bumps `package.json` version from `1.0.0` to `1.1.0`.
 
 ---
 
