@@ -1,14 +1,15 @@
-# Java Project Runner MCP (v1)
+# Java Project Runner MCP (v1.1)
 
-Single-process MCP server (stdio) that builds and manages **registered** Spring Boot + Maven projects on macOS: list / inspect / build / start / stop / restart / status / logs.
+Single-process MCP server (stdio) that builds and manages **registered** Spring Boot + Maven projects on macOS: list / inspect / build / start / stop / restart / status / logs / registry CRUD / reclaim.
 
-**Locked v1 behavior**
+**Locked behavior**
 
-- Start = Maven `package` (default) then run the configured JAR — not `spring-boot:run`
+- Start runs the configured JAR via `java -jar` — not `spring-boot:run`
+- Before start: Maven `package` (default) **unless** the JAR is fresher than `pom.xml` + `src/**` sources, or `skipBuild` is set; use `rebuild: true` to force package
 - Prefer `./mvnw` when executable; otherwise system `mvn`
 - `-DskipTests` default **on** (configurable per call / registry)
 - Stop signals the **managed process group only** (never by port / main-class)
-- Registry is **hand-edited** only: `~/.java-project-runner/projects.json`
+- Registry: hand-edit `~/.java-project-runner/projects.json` **or** use `project_register` / `project_update` / `project_unregister`
 - Do **not** run multiple servers against the same registry concurrently
 
 ## Requirements
@@ -42,7 +43,7 @@ node dist/index.js
 
 ## Registry
 
-Create `~/.java-project-runner/projects.json` by hand:
+Create or edit `~/.java-project-runner/projects.json` by hand, or use the register/update tools:
 
 ```json
 {
@@ -68,6 +69,7 @@ Create `~/.java-project-runner/projects.json` by hand:
 Notes:
 
 - `id` must be a single safe path segment: 1–64 chars, start/end alphanumeric; middle may include `.` `_` `-`; no `..` or path separators.
+- `path` must exist and contain `pom.xml` (enforced on register/update).
 - `jarPath` may be a concrete relative path or a single-glob filename such as `target/*.jar` (exactly one non-`sources`/`javadoc` match).
 - `healthCheckUrl` must be loopback (`127.0.0.1` / `localhost` / `::1`).
 - State + logs live under `~/.java-project-runner/state/` and `~/.java-project-runner/logs/<id>/`.
@@ -78,12 +80,28 @@ Notes:
 |------|---------|
 | `project_list` | List registered projects |
 | `project_inspect` | pom / wrapper / jar resolvability / config |
+| `project_register` | Add a project to the registry |
+| `project_update` | Patch an existing project (id immutable) |
+| `project_unregister` | Remove a project (refuses if running/unknown) |
 | `project_build` | Maven build |
-| `project_start` | package → `java -jar` (detached pgid) |
+| `project_start` | Smart package → `java -jar` (`rebuild` / `skipBuild` optional) |
 | `project_stop` | SIGTERM → wait → SIGKILL on managed pgid |
+| `project_force_stop` | Fingerprint-gated stop; requires `confirm: true`; allowed for `unknown` |
+| `project_reclaim` | Re-verify PID fingerprint after MCP restart |
 | `project_restart` | stop then start under one lock |
 | `project_status` | One or all runtime states |
 | `project_logs` | Tail stdout/stderr (max 200 lines) |
+
+### Start build flags
+
+| Flag | Effect |
+|------|--------|
+| _(none)_ | Skip Maven if resolved JAR mtime ≥ newest of `pom.xml` and `src/**` (`.java`/`.xml`/`.yml`/`.yaml`/`.properties`); else `package` |
+| `rebuild: true` | Always Maven before start |
+| `skipBuild: true` | Never Maven; JAR must already resolve |
+| both true | `INVALID_ARGS` |
+
+Response includes `buildSkipped` and `buildSkipReason` (`jar_fresh` | `skipBuild_flag` | `null`).
 
 ## Cursor stdio config
 
@@ -143,7 +161,8 @@ Or with `npx tsx` for local iteration (Node 20+ on PATH):
 - Only `enabled` registry projects can be built/started/stopped.
 - Paths are realpath-checked against the project root.
 - `spawn(..., { shell: false })` only; goals / profiles / `jvmArgs` are whitelisted.
-- After MCP server restart, unverified PIDs become `unknown` — the server will **not** blind-kill them.
+- After MCP server restart, unverified PIDs become `unknown` (pid retained for reclaim/force_stop) — the server will **not** blind-kill them.
+- `project_force_stop` requires `confirm: true` and a matching `java -jar` cmdline fingerprint.
 - Do not run more than one MCP server process against the same `~/.java-project-runner` home at once (e.g. Cursor and Claude Code concurrently).
 
 ## License

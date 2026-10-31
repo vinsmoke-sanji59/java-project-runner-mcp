@@ -62,12 +62,11 @@ export class ProcessManager {
       const pid = st.pid ?? null;
       const jar = st.jarResolved ?? "";
       if (!pid || !isPidAlive(pid) || !cmdlineMatchesManagedJava(pid, jar)) {
+        // Keep pid/pgid/jar so reclaim / force_stop can still fingerprint.
         await this.stateStore.update(projectId, {
           status: "unknown",
           lastError:
-            "process not verified after server restart (PID missing or argv mismatch); refusing blind kill",
-          pid: null,
-          pgid: null,
+            "process not verified after server restart (PID missing or argv mismatch); use project_reclaim or project_force_stop",
         });
         continue;
       }
@@ -77,6 +76,63 @@ export class ProcessManager {
         lastError: null,
       });
     }
+  }
+
+  /** Re-verify a persisted PID against managed java -jar fingerprint. */
+  async reclaim(
+    projectId: string,
+    jarHint?: string | null,
+  ): Promise<ProjectRuntimeState> {
+    return projectMutex.runExclusive(projectId, "reclaim", async () => {
+      const st = await this.stateStore.get(projectId);
+      const jar = (jarHint || st.jarResolved || "").trim();
+      const pid = st.pid;
+      if (!pid) {
+        return this.stateStore.update(projectId, {
+          status: "unknown",
+          lastError: "reclaim failed: no persisted pid",
+        });
+      }
+      if (!isPidAlive(pid)) {
+        return this.stateStore.update(projectId, {
+          status: "unknown",
+          lastError: "reclaim failed: pid not alive",
+          pid: null,
+          pgid: null,
+        });
+      }
+      if (!jar || !cmdlineMatchesManagedJava(pid, jar)) {
+        return this.stateStore.update(projectId, {
+          status: "unknown",
+          lastError: "reclaim failed: cmdline does not match managed java -jar",
+        });
+      }
+      return this.stateStore.update(projectId, {
+        status: "running",
+        jarResolved: jar,
+        readiness: "unverified",
+        lastError: null,
+      });
+    });
+  }
+
+  /**
+   * Stop when fingerprint matches. Requires confirm:true.
+   * Allowed for unknown status (unlike project_stop).
+   */
+  async forceStop(
+    project: ProjectConfig & { resolvedPath: string },
+    options: { confirm: boolean; timeoutSeconds?: number },
+  ): Promise<ProjectRuntimeState> {
+    if (!options.confirm) {
+      throw new AppError(
+        "INVALID_ARGS",
+        "force_stop requires confirm: true",
+      );
+    }
+    return projectMutex.runExclusive(project.id, "force_stop", () =>
+      this.forceStopCore(project, options.timeoutSeconds),
+    );
   }
 
   async build(
@@ -377,7 +433,7 @@ export class ProcessManager {
     if (current.status === "unknown") {
       throw new AppError(
         "NOT_RUNNING",
-        "project status is unknown; refusing to kill (verify manually)",
+        "project status is unknown; use project_reclaim or project_force_stop (confirm:true)",
       );
     }
 
@@ -419,6 +475,83 @@ export class ProcessManager {
         // ignore
       }
       const killed = await waitForExit(pid!, 3000);
+      if (!killed) {
+        await this.stateStore.update(project.id, {
+          status: "failed",
+          lastError: `STOP_TIMEOUT after ${timeout}s (SIGKILL also did not clear)`,
+        });
+        throw new AppError(
+          "STOP_TIMEOUT",
+          `process group did not exit after ${timeout}s`,
+        );
+      }
+    }
+
+    this.live.delete(project.id);
+    return this.stateStore.update(project.id, {
+      status: "stopped",
+      pid: null,
+      pgid: null,
+      exitCode: 0,
+      lastError: null,
+      readiness: "not_configured",
+    });
+  }
+
+  private async forceStopCore(
+    project: ProjectConfig & { resolvedPath: string },
+    timeoutSeconds?: number,
+  ): Promise<ProjectRuntimeState> {
+    const current = await this.stateStore.get(project.id);
+    const live = this.live.get(project.id);
+    const pgid = live?.pgid ?? current.pgid ?? null;
+    const pid = live?.pid ?? current.pid ?? null;
+    const jar = current.jarResolved ?? live?.jarResolved ?? "";
+
+    if (!pgid && !pid) {
+      throw new AppError(
+        "NOT_RUNNING",
+        `force_stop: no pid/pgid for ${project.id}`,
+      );
+    }
+
+    if (pid && isPidAlive(pid)) {
+      if (!jar || !cmdlineMatchesManagedJava(pid, jar)) {
+        throw new AppError(
+          "NOT_RUNNING",
+          "force_stop refused: PID cmdline does not match managed java -jar fingerprint",
+        );
+      }
+    }
+
+    const timeout = timeoutSeconds ?? project.stopTimeoutSeconds ?? 15;
+    await this.stateStore.update(project.id, {
+      status: "stopping",
+      lastError: null,
+    });
+
+    if (pgid) {
+      try {
+        process.kill(-pgid, "SIGTERM");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+          throw new AppError(
+            "START_FAILED",
+            `SIGTERM failed: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+
+    const watchPid = pid ?? pgid!;
+    const exited = await waitForExit(watchPid, timeout * 1000);
+    if (!exited && pgid) {
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch {
+        // ignore
+      }
+      const killed = await waitForExit(watchPid, 3000);
       if (!killed) {
         await this.stateStore.update(project.id, {
           status: "failed",

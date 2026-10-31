@@ -2,14 +2,32 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { AppError } from "../errors.js";
 import { resolveMavenExecutable } from "../services/build.js";
 import { jarResolvable } from "../services/jar-resolve.js";
 import { logFilePath, tailLogFile } from "../services/logs.js";
 import type { ProcessManager } from "../services/process-manager.js";
 import type { RegistryService } from "../services/registry.js";
 import type { StateStore } from "../services/state-store.js";
-import { isLoopbackUrl } from "../security/path-policy.js";
+import { assertProjectRoot, isLoopbackUrl } from "../security/path-policy.js";
+import { ProjectIdSchema } from "../types/project.js";
 import { errResult, okResult } from "./helpers.js";
+
+const projectConfigInput = {
+  id: ProjectIdSchema,
+  name: z.string().min(1),
+  path: z.string().min(1),
+  jarPath: z.string().min(1),
+  javaHome: z.string().min(1).optional(),
+  buildGoal: z.string().min(1).optional(),
+  skipTests: z.boolean().optional(),
+  jvmArgs: z.array(z.string()).optional(),
+  profiles: z.array(z.string().min(1)).optional(),
+  defaultProfile: z.string().min(1).optional(),
+  healthCheckUrl: z.string().url().optional(),
+  stopTimeoutSeconds: z.number().int().positive().optional(),
+  enabled: z.boolean(),
+};
 
 export interface AppContext {
   registry: RegistryService;
@@ -321,6 +339,169 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
           message: "logs tail (capped)",
           ...one,
           maxTailLines: 200,
+        });
+      } catch (err) {
+        return errResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "project_register",
+    {
+      description:
+        "Add a project to ~/.java-project-runner/projects.json (path must contain pom.xml)",
+      inputSchema: projectConfigInput,
+    },
+    async (input) => {
+      try {
+        const project = await ctx.registry.register(input);
+        return okResult({
+          success: true,
+          message: `registered ${project.id}`,
+          project,
+        });
+      } catch (err) {
+        return errResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "project_update",
+    {
+      description:
+        "Patch an existing registry project (id cannot change). Re-validates the full entry.",
+      inputSchema: {
+        projectId: z.string(),
+        name: z.string().min(1).optional(),
+        path: z.string().min(1).optional(),
+        jarPath: z.string().min(1).optional(),
+        javaHome: z.string().min(1).optional(),
+        buildGoal: z.string().min(1).optional(),
+        skipTests: z.boolean().optional(),
+        jvmArgs: z.array(z.string()).optional(),
+        profiles: z.array(z.string().min(1)).optional(),
+        defaultProfile: z.string().min(1).optional(),
+        healthCheckUrl: z.string().url().optional(),
+        stopTimeoutSeconds: z.number().int().positive().optional(),
+        enabled: z.boolean().optional(),
+      },
+    },
+    async ({ projectId, ...patch }) => {
+      try {
+        const project = await ctx.registry.update(projectId, patch);
+        return okResult({
+          success: true,
+          message: `updated ${projectId}`,
+          project,
+        });
+      } catch (err) {
+        return errResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "project_unregister",
+    {
+      description:
+        "Remove a project from the registry. Refuses if runtime status is running/starting/stopping/unknown.",
+      inputSchema: {
+        projectId: z.string(),
+      },
+    },
+    async ({ projectId }) => {
+      try {
+        ctx.registry.get(projectId);
+        const state = await ctx.stateStore.get(projectId);
+        if (
+          state.status === "running" ||
+          state.status === "starting" ||
+          state.status === "stopping" ||
+          state.status === "unknown"
+        ) {
+          throw new AppError(
+            "BUSY",
+            `cannot unregister ${projectId} while status is ${state.status}; stop or force_stop first`,
+          );
+        }
+        await ctx.registry.unregister(projectId);
+        return okResult({
+          success: true,
+          message: `unregistered ${projectId}`,
+          projectId,
+        });
+      } catch (err) {
+        return errResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "project_reclaim",
+    {
+      description:
+        "Re-verify a persisted PID against the managed java -jar fingerprint and mark running if matched",
+      inputSchema: {
+        projectId: z.string(),
+      },
+    },
+    async ({ projectId }) => {
+      try {
+        const project = ctx.registry.get(projectId);
+        let jarHint: string | null = null;
+        try {
+          const root = assertProjectRoot(project.path);
+          jarHint = jarResolvable(root, project.jarPath).resolved ?? null;
+        } catch {
+          jarHint = null;
+        }
+        const state = await ctx.processes.reclaim(projectId, jarHint);
+        return okResult({
+          success: true,
+          projectId,
+          status: state.status,
+          message:
+            state.status === "running"
+              ? "reclaimed; process fingerprint matched"
+              : (state.lastError ?? "reclaim did not restore running"),
+          pid: state.pid,
+          pgid: state.pgid,
+          jarResolved: state.jarResolved,
+        });
+      } catch (err) {
+        return errResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "project_force_stop",
+    {
+      description:
+        "Stop a managed process when cmdline fingerprint still matches. Requires confirm:true. Allowed for unknown status; never blind-kills.",
+      inputSchema: {
+        projectId: z.string(),
+        confirm: z
+          .boolean()
+          .describe("Must be true to proceed"),
+        timeoutSeconds: z.number().int().positive().optional(),
+      },
+    },
+    async ({ projectId, confirm, timeoutSeconds }) => {
+      try {
+        const project = ctx.registry.requireEnabled(projectId);
+        const state = await ctx.processes.forceStop(project, {
+          confirm,
+          timeoutSeconds,
+        });
+        return okResult({
+          success: true,
+          projectId,
+          status: state.status,
+          message: "force_stop completed (fingerprint-gated)",
+          exitCode: state.exitCode,
         });
       } catch (err) {
         return errResult(err);

@@ -16,7 +16,7 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "java-project-runner",
-    version: "1.0.0",
+    version: "1.1.0",
   });
 
   registerTools(server, { registry, stateStore, processes });

@@ -1,6 +1,6 @@
 {
   "name": "java-project-runner-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server to build/start/stop/status/logs for registered Spring Boot Maven projects",
   "type": "module",
   "main": "dist/index.js",
