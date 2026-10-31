@@ -78,4 +78,26 @@ describe("RegistryService", () => {
     const reg = new RegistryService(file);
     expect(() => reg.load()).toThrow(AppError);
   });
+
+  it("rejects path-traversal project ids", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jpr-reg-"));
+    const file = path.join(dir, "projects.json");
+    tmpFiles.push(file);
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        projects: [
+          {
+            id: "../../.ssh",
+            name: "Evil",
+            path: "/tmp/x",
+            jarPath: "target/app.jar",
+            enabled: true,
+          },
+        ],
+      }),
+    );
+    const reg = new RegistryService(file);
+    expect(() => reg.load()).toThrow(AppError);
+  });
 });

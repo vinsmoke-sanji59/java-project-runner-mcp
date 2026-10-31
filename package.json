@@ -23,6 +23,14 @@
     "maven",
     "java"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinsmoke-sanji59/java-project-runner-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vinsmoke-sanji59/java-project-runner-mcp/issues"
+  },
+  "homepage": "https://github.com/vinsmoke-sanji59/java-project-runner-mcp#readme",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

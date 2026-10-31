@@ -20,7 +20,8 @@ Single-process MCP server (stdio) that builds and manages **registered** Spring 
 ## Install
 
 ```bash
-cd ~/DevelopProject/java-project-runner-mcp
+git clone https://github.com/vinsmoke-sanji59/java-project-runner-mcp.git
+cd java-project-runner-mcp
 nvm use 20   # if you use nvm
 npm install
 npm run build
@@ -66,6 +67,7 @@ Create `~/.java-project-runner/projects.json` by hand:
 
 Notes:
 
+- `id` must be a single safe path segment: 1–64 chars, start/end alphanumeric; middle may include `.` `_` `-`; no `..` or path separators.
 - `jarPath` may be a concrete relative path or a single-glob filename such as `target/*.jar` (exactly one non-`sources`/`javadoc` match).
 - `healthCheckUrl` must be loopback (`127.0.0.1` / `localhost` / `::1`).
 - State + logs live under `~/.java-project-runner/state/` and `~/.java-project-runner/logs/<id>/`.
@@ -85,15 +87,15 @@ Notes:
 
 ## Cursor stdio config
 
-Add to Cursor MCP settings (path may be `~/.cursor/mcp.json` or the IDE MCP UI):
+Add to Cursor MCP settings (path may be `~/.cursor/mcp.json` or the IDE MCP UI). Replace the paths with your Node binary and clone location:
 
 ```json
 {
   "mcpServers": {
     "java-project-runner": {
-      "command": "/Users/guanzilan/.nvm/versions/node/v20.20.2/bin/node",
+      "command": "/absolute/path/to/node",
       "args": [
-        "/Users/guanzilan/DevelopProject/java-project-runner-mcp/dist/index.js"
+        "/absolute/path/to/java-project-runner-mcp/dist/index.js"
       ]
     }
   }
@@ -110,9 +112,9 @@ In Claude Code MCP settings / `.mcp.json`:
 {
   "mcpServers": {
     "java-project-runner": {
-      "command": "/Users/guanzilan/.nvm/versions/node/v20.20.2/bin/node",
+      "command": "/absolute/path/to/node",
       "args": [
-        "/Users/guanzilan/DevelopProject/java-project-runner-mcp/dist/index.js"
+        "/absolute/path/to/java-project-runner-mcp/dist/index.js"
       ]
     }
   }
@@ -128,9 +130,9 @@ Or with `npx tsx` for local iteration (Node 20+ on PATH):
       "command": "npx",
       "args": [
         "tsx",
-        "/Users/guanzilan/DevelopProject/java-project-runner-mcp/src/index.ts"
+        "/absolute/path/to/java-project-runner-mcp/src/index.ts"
       ],
-      "cwd": "/Users/guanzilan/DevelopProject/java-project-runner-mcp"
+      "cwd": "/absolute/path/to/java-project-runner-mcp"
     }
   }
 }
@@ -142,6 +144,7 @@ Or with `npx tsx` for local iteration (Node 20+ on PATH):
 - Paths are realpath-checked against the project root.
 - `spawn(..., { shell: false })` only; goals / profiles / `jvmArgs` are whitelisted.
 - After MCP server restart, unverified PIDs become `unknown` — the server will **not** blind-kill them.
+- Do not run more than one MCP server process against the same `~/.java-project-runner` home at once (e.g. Cursor and Claude Code concurrently).
 
 ## License
 
