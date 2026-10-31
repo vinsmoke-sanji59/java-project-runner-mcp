@@ -8,6 +8,7 @@ import {
 } from "../security/command-policy.js";
 import type { ProjectConfig } from "../types/project.js";
 import { createLogWriteStream, ensureLogDir, logFilePath } from "./logs.js";
+import { resolveMavenWrapperPath } from "./process-platform.js";
 
 export interface BuildOptions {
   goal?: string;
@@ -29,15 +30,10 @@ export function resolveMavenExecutable(projectRoot: string): {
   argsPrefix: string[];
   kind: "mvnw" | "mvn";
 } {
-  const mvnw = path.join(projectRoot, "mvnw");
-  try {
-    fs.accessSync(mvnw, fs.constants.X_OK);
-    return { command: mvnw, argsPrefix: [], kind: "mvnw" };
-  } catch {
-    // fall through
+  const wrapper = resolveMavenWrapperPath(projectRoot);
+  if (wrapper) {
+    return { command: wrapper, argsPrefix: [], kind: "mvnw" };
   }
-  // Non-executable but present: still try via /bin/sh? No — plan says spawn shell:false.
-  // Prefer invoking via absolute path only if executable; else system mvn.
   return { command: "mvn", argsPrefix: [], kind: "mvn" };
 }
 

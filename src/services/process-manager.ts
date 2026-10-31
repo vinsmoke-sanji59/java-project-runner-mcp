@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { AppError } from "../errors.js";
@@ -21,7 +20,16 @@ import {
   ensureLogDir,
   logFilePath,
 } from "./logs.js";
+import {
+  cmdlineMatchesManagedJava,
+  isPidAlive,
+  javaSpawnOptions,
+  readCmdline,
+  signalManagedTree,
+} from "./process-platform.js";
 import { projectMutex, StateStore } from "./state-store.js";
+
+export { cmdlineMatchesManagedJava, isPidAlive, readCmdline };
 
 export interface StartOptions {
   profile?: string;
@@ -339,9 +347,7 @@ export class ProcessManager {
       child = spawn(javaBin, args, {
         cwd: project.resolvedPath,
         env,
-        shell: false,
-        detached: true,
-        stdio: ["ignore", "pipe", "pipe"],
+        ...javaSpawnOptions(),
       });
     } catch (err) {
       const msg = `spawn failed: ${(err as Error).message}`;
@@ -456,21 +462,20 @@ export class ProcessManager {
       lastError: null,
     });
 
+    const rootPid = pgid ?? pid!;
     try {
-      process.kill(-pgid!, "SIGTERM");
+      await signalManagedTree(rootPid, "term");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-        throw new AppError(
-          "START_FAILED",
-          `SIGTERM failed: ${(err as Error).message}`,
-        );
-      }
+      throw new AppError(
+        "START_FAILED",
+        `stop signal failed: ${(err as Error).message}`,
+      );
     }
 
     const exited = await waitForExit(pid!, timeout * 1000);
     if (!exited) {
       try {
-        process.kill(-pgid!, "SIGKILL");
+        await signalManagedTree(rootPid, "kill");
       } catch {
         // ignore
       }
@@ -478,11 +483,11 @@ export class ProcessManager {
       if (!killed) {
         await this.stateStore.update(project.id, {
           status: "failed",
-          lastError: `STOP_TIMEOUT after ${timeout}s (SIGKILL also did not clear)`,
+          lastError: `STOP_TIMEOUT after ${timeout}s (force kill also did not clear)`,
         });
         throw new AppError(
           "STOP_TIMEOUT",
-          `process group did not exit after ${timeout}s`,
+          `managed process tree did not exit after ${timeout}s`,
         );
       }
     }
@@ -530,24 +535,21 @@ export class ProcessManager {
       lastError: null,
     });
 
-    if (pgid) {
-      try {
-        process.kill(-pgid, "SIGTERM");
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-          throw new AppError(
-            "START_FAILED",
-            `SIGTERM failed: ${(err as Error).message}`,
-          );
-        }
-      }
+    const rootPid = pgid ?? pid!;
+    try {
+      await signalManagedTree(rootPid, "term");
+    } catch (err) {
+      throw new AppError(
+        "START_FAILED",
+        `force_stop signal failed: ${(err as Error).message}`,
+      );
     }
 
-    const watchPid = pid ?? pgid!;
+    const watchPid = pid ?? rootPid;
     const exited = await waitForExit(watchPid, timeout * 1000);
-    if (!exited && pgid) {
+    if (!exited) {
       try {
-        process.kill(-pgid, "SIGKILL");
+        await signalManagedTree(rootPid, "kill");
       } catch {
         // ignore
       }
@@ -555,11 +557,11 @@ export class ProcessManager {
       if (!killed) {
         await this.stateStore.update(project.id, {
           status: "failed",
-          lastError: `STOP_TIMEOUT after ${timeout}s (SIGKILL also did not clear)`,
+          lastError: `STOP_TIMEOUT after ${timeout}s (force kill also did not clear)`,
         });
         throw new AppError(
           "STOP_TIMEOUT",
-          `process group did not exit after ${timeout}s`,
+          `managed process tree did not exit after ${timeout}s`,
         );
       }
     }
@@ -598,44 +600,6 @@ export class ProcessManager {
       lastError: `process exited unexpectedly with code ${code}`,
     });
   }
-}
-
-export function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function readCmdline(pid: number): string | null {
-  try {
-    const out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
-      encoding: "utf8",
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
-}
-
-export function cmdlineMatchesManagedJava(
-  pid: number,
-  jarResolved: string,
-): boolean {
-  const cmd = readCmdline(pid);
-  if (!cmd) return false;
-  if (!cmd.includes("java")) return false;
-  if (!cmd.includes("-jar")) return false;
-  if (
-    jarResolved &&
-    !cmd.includes(path.basename(jarResolved)) &&
-    !cmd.includes(jarResolved)
-  ) {
-    return false;
-  }
-  return true;
 }
 
 function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {

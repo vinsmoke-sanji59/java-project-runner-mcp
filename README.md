@@ -1,6 +1,6 @@
-# Java Project Runner MCP (v1.2)
+# Java Project Runner MCP (v1.3)
 
-Single-process MCP server (stdio) that builds and manages **registered** Spring Boot + Maven projects on macOS: list / inspect / build / start / stop / restart / status / logs / registry CRUD / reclaim.
+Single-process MCP server (stdio) that builds and manages **registered** Spring Boot + Maven projects on **macOS, Linux, and Windows**: list / inspect / build / start / stop / restart / status / logs / registry CRUD / reclaim.
 
 **Locked behavior**
 
@@ -8,7 +8,8 @@ Single-process MCP server (stdio) that builds and manages **registered** Spring 
 - Before start: Maven `package` (default) **unless** the JAR is fresher than `pom.xml` + `src/**` sources, or `skipBuild` is set; use `rebuild: true` to force package
 - Prefer `./mvnw` when executable; otherwise system `mvn`
 - `-DskipTests` default **on** (configurable per call / registry)
-- Stop signals the **managed process group only** (never by port / main-class)
+- Stop targets the **managed process tree only** (POSIX process group, or Windows `taskkill /T`) — never by port / main-class
+- Maven Wrapper: `./mvnw` on Unix, `mvnw.cmd` / `mvnw.bat` on Windows; else system `mvn`
 - Registry: hand-edit `~/.java-project-runner/projects.json` **or** use `project_register` / `project_update` / `project_unregister`
 - **Same home** by default: multiple MCP clients (e.g. Cursor + Claude Code) may share `~/.java-project-runner`; mutating ops use per-project file locks (`locks/<id>.lock`) and return `BUSY` if contended
 - Optional `JAVA_PROJECT_RUNNER_HOME` (absolute path) overrides the data root if you need an isolated home
@@ -16,8 +17,8 @@ Single-process MCP server (stdio) that builds and manages **registered** Spring 
 ## Requirements
 
 - Node.js **20+** (LTS)
-- macOS (v1)
-- JDK + Maven (or project `mvnw`) for the projects you register
+- macOS, Linux, or Windows
+- JDK + Maven (or project Maven Wrapper) for the projects you register
 
 ## Install
 
