@@ -1,4 +1,4 @@
-# Java Project Runner MCP (v1.1)
+# Java Project Runner MCP (v1.2)
 
 Single-process MCP server (stdio) that builds and manages **registered** Spring Boot + Maven projects on macOS: list / inspect / build / start / stop / restart / status / logs / registry CRUD / reclaim.
 
@@ -10,7 +10,8 @@ Single-process MCP server (stdio) that builds and manages **registered** Spring 
 - `-DskipTests` default **on** (configurable per call / registry)
 - Stop signals the **managed process group only** (never by port / main-class)
 - Registry: hand-edit `~/.java-project-runner/projects.json` **or** use `project_register` / `project_update` / `project_unregister`
-- Do **not** run multiple servers against the same registry concurrently
+- **Same home** by default: multiple MCP clients (e.g. Cursor + Claude Code) may share `~/.java-project-runner`; mutating ops use per-project file locks (`locks/<id>.lock`) and return `BUSY` if contended
+- Optional `JAVA_PROJECT_RUNNER_HOME` (absolute path) overrides the data root if you need an isolated home
 
 ## Requirements
 
@@ -72,7 +73,7 @@ Notes:
 - `path` must exist and contain `pom.xml` (enforced on register/update).
 - `jarPath` may be a concrete relative path or a single-glob filename such as `target/*.jar` (exactly one non-`sources`/`javadoc` match).
 - `healthCheckUrl` must be loopback (`127.0.0.1` / `localhost` / `::1`).
-- State + logs live under `~/.java-project-runner/state/` and `~/.java-project-runner/logs/<id>/`.
+- State / logs / locks live under `~/.java-project-runner/state/`, `logs/<id>/`, and `locks/<id>.lock` (or under `JAVA_PROJECT_RUNNER_HOME` if set).
 
 ## MCP tools
 
@@ -163,7 +164,7 @@ Or with `npx tsx` for local iteration (Node 20+ on PATH):
 - `spawn(..., { shell: false })` only; goals / profiles / `jvmArgs` are whitelisted.
 - After MCP server restart, unverified PIDs become `unknown` (pid retained for reclaim/force_stop) — the server will **not** blind-kill them.
 - `project_force_stop` requires `confirm: true` and a matching `java -jar` cmdline fingerprint.
-- Do not run more than one MCP server process against the same `~/.java-project-runner` home at once (e.g. Cursor and Claude Code concurrently).
+- Multiple MCP clients may share the same home; overlapping ops on one project return `BUSY` instead of corrupting state.
 
 ## License
 

@@ -16,7 +16,7 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "java-project-runner",
-    version: "1.1.0",
+    version: "1.2.0",
   });
 
   registerTools(server, { registry, stateStore, processes });
@@ -29,7 +29,7 @@ async function main(): Promise<void> {
     `[java-project-runner] ready home=${runnerHome()} registry=${registryPath()}`,
   );
   console.error(
-    "[java-project-runner] Do NOT run multiple servers against the same registry concurrently.",
+    "[java-project-runner] same-home multi-client OK (per-project file locks); optional JAVA_PROJECT_RUNNER_HOME overrides data root",
   );
 }
 

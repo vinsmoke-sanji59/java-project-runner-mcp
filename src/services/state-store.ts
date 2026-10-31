@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import lockfile from "proper-lockfile";
 import { AppError } from "../errors.js";
-import { stateDir, stateFilePath } from "../paths.js";
+import { locksDir, projectLockPath, stateDir, stateFilePath } from "../paths.js";
 import {
   StateFileSchema,
   emptyRuntimeState,
@@ -11,7 +11,11 @@ import {
   type StateFile,
 } from "../types/state.js";
 
-/** In-process per-project mutex to surface BUSY on overlapping ops. */
+/**
+ * Per-project mutex: in-process map + cross-process file lock under
+ * `<runnerHome>/locks/<projectId>.lock` so multiple MCP clients sharing
+ * the same home cannot overlap mutating ops.
+ */
 class ProjectMutex {
   private readonly held = new Map<string, string>();
 
@@ -36,9 +40,33 @@ class ProjectMutex {
     fn: () => Promise<T>,
   ): Promise<T> {
     this.tryAcquire(projectId, op);
+    let releaseFile: (() => Promise<void>) | undefined;
     try {
+      await fs.mkdir(locksDir(), { recursive: true });
+      const lockPath = projectLockPath(projectId);
+      if (!fsSync.existsSync(lockPath)) {
+        await fs.writeFile(lockPath, "", "utf8");
+      }
+      try {
+        releaseFile = await lockfile.lock(lockPath, {
+          retries: 0,
+          stale: 60_000,
+        });
+      } catch {
+        throw new AppError(
+          "BUSY",
+          `project ${projectId} is busy (another java-project-runner process holds the lock) during: ${op}`,
+        );
+      }
       return await fn();
     } finally {
+      if (releaseFile) {
+        try {
+          await releaseFile();
+        } catch {
+          // ignore unlock errors
+        }
+      }
       this.release(projectId);
     }
   }
