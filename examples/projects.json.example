@@ -1,0 +1,19 @@
+{
+  "projects": [
+    {
+      "id": "order-service",
+      "name": "Order Service",
+      "path": "/Users/you/ws/order-service",
+      "jarPath": "target/order-service-0.0.1-SNAPSHOT.jar",
+      "javaHome": "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home",
+      "buildGoal": "package",
+      "skipTests": true,
+      "jvmArgs": ["-Xmx512m", "-Dserver.port=8081"],
+      "profiles": ["local", "dev"],
+      "defaultProfile": "local",
+      "healthCheckUrl": "http://127.0.0.1:8081/actuator/health",
+      "stopTimeoutSeconds": 15,
+      "enabled": true
+    }
+  ]
+}

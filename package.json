@@ -1,0 +1,39 @@
+{
+  "name": "java-project-runner-mcp",
+  "version": "1.0.0",
+  "description": "MCP server to build/start/stop/status/logs for registered Spring Boot Maven projects",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "java-project-runner-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "spring-boot",
+    "maven",
+    "java"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "proper-lockfile": "^4.1.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.2",
+    "@types/proper-lockfile": "^4.1.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
