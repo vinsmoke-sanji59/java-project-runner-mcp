@@ -41,6 +41,73 @@ export function resolveMavenExecutable(projectRoot: string): {
   return { command: "mvn", argsPrefix: [], kind: "mvn" };
 }
 
+/** Extract `Apache Maven x.y.z` from `mvn -v` / `mvnw -v` stdout. */
+export function parseMavenVersionOutput(stdout: string): string | null {
+  const m = stdout.match(/Apache Maven\s+(\S+)/i);
+  return m ? `Apache Maven ${m[1]}` : null;
+}
+
+/**
+ * Probe Maven version via `<command> -v` (shell: false).
+ * Used by inspect when falling back to system mvn (drift warning).
+ */
+export async function probeMavenVersion(
+  command: string,
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+): Promise<{ version: string | null; output: string; error: string | null }> {
+  const timeoutMs = opts.timeoutMs ?? 8_000;
+  const env = opts.env ?? process.env;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const child = spawn(command, ["-v"], {
+      cwd: opts.cwd,
+      env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let out = "";
+    const onChunk = (chunk: Buffer) => {
+      out += chunk.toString("utf8");
+    };
+    child.stdout?.on("data", onChunk);
+    child.stderr?.on("data", onChunk);
+
+    const finish = (error: string | null) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        version: parseMavenVersionOutput(out),
+        output: out.trim(),
+        error,
+      });
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      finish(`timed out after ${timeoutMs}ms`);
+    }, timeoutMs);
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      finish(err.message);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0 && !parseMavenVersionOutput(out)) {
+        finish(`exitCode=${code ?? 1}`);
+        return;
+      }
+      finish(null);
+    });
+  });
+}
+
 export async function runMavenBuild(
   project: ProjectConfig & { resolvedPath: string },
   options: BuildOptions = {},

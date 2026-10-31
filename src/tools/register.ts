@@ -3,7 +3,10 @@ import path from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { AppError } from "../errors.js";
-import { resolveMavenExecutable } from "../services/build.js";
+import {
+  probeMavenVersion,
+  resolveMavenExecutable,
+} from "../services/build.js";
 import { jarResolvable } from "../services/jar-resolve.js";
 import { logFilePath, tailLogFile } from "../services/logs.js";
 import type { ProcessManager } from "../services/process-manager.js";
@@ -71,7 +74,7 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
     "project_inspect",
     {
       description:
-        "Inspect a registered project: pom/wrapper/javaHome/jarPath resolvability and config summary",
+        "Inspect a registered project: pom/wrapper/javaHome/jarPath resolvability, Maven version probe, and config summary",
       inputSchema: {
         projectId: z.string().describe("Registry project id"),
       },
@@ -90,6 +93,22 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
           : null;
         const state = await ctx.stateStore.get(projectId);
 
+        const probeEnv = { ...process.env };
+        if (project.javaHome) {
+          probeEnv.JAVA_HOME = project.javaHome;
+          probeEnv.PATH = `${path.join(project.javaHome, "bin")}${path.delimiter}${probeEnv.PATH ?? ""}`;
+        }
+        const mavenProbe = await probeMavenVersion(maven.command, {
+          cwd: project.resolvedPath,
+          env: probeEnv,
+        });
+        const driftWarning =
+          maven.kind === "mvn"
+            ? mavenProbe.version
+              ? `No executable mvnw; using system ${mavenProbe.version} (version may drift across machines)`
+              : `No executable mvnw; will use system mvn (version may drift)${mavenProbe.error ? `; probe failed: ${mavenProbe.error}` : ""}`
+            : null;
+
         return okResult({
           success: true,
           projectId,
@@ -102,10 +121,14 @@ export function registerTools(server: McpServer, ctx: AppContext): void {
             maven: {
               kind: maven.kind,
               command: maven.command,
+              version: mavenProbe.version,
+              versionProbeError: mavenProbe.error,
+              driftWarning,
               hint:
-                maven.kind === "mvn"
-                  ? "No executable mvnw; will use system mvn (version may drift)"
-                  : "Using project Maven Wrapper",
+                maven.kind === "mvnw"
+                  ? "Using project Maven Wrapper"
+                  : (driftWarning ??
+                    "No executable mvnw; will use system mvn (version may drift)"),
             },
             javaHome,
             javaBin,
